@@ -7,5 +7,5 @@ until ssh "${SSHO[@]}" -p "$PORT" root@"$HOST" true 2>/dev/null; do echo "waitin
 # conda-forge btop (glibc, GPU_SUPPORT) in its own env; the static musl release can't load NVML.
 exec ssh -t "${SSHO[@]}" -p "$PORT" root@"$HOST" '
   [ -x /opt/btopenv/bin/btop ] || { echo "installing btop..."; /opt/conda/bin/conda create -q -y -p /opt/btopenv -c conda-forge --override-channels btop >/dev/null 2>&1; }
-  mkdir -p ~/.config/btop && sed -i "/^shown_boxes/d" ~/.config/btop/btop.conf 2>/dev/null; echo "shown_boxes = \\"cpu gpu0 mem proc\\"" >> ~/.config/btop/btop.conf
+  mkdir -p ~/.config/btop && sed -i "/^shown_boxes/d" ~/.config/btop/btop.conf 2>/dev/null; echo "shown_boxes = \"cpu gpu0 mem proc\"" >> ~/.config/btop/btop.conf
   exec /opt/btopenv/bin/btop'
