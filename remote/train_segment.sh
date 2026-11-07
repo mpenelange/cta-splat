@@ -51,11 +51,11 @@ ns-process-data images --data images --output-dir processed --skip-colmap \
 t1=$(date +%s)
 ns-train splatfacto-big --data processed --output-dir runs \
   --max-num-iterations "$ITERS" --viewer.quit-on-train-completion True \
-  --pipeline.datamanager.cache-images cpu \
+  --pipeline.datamanager.cache-images "${CACHE_IMAGES:-gpu}" \
   nerfstudio-data --downscale-factor 1 2>&1 | grep -vE '^\s*$' | awk 'NR%50==1 || /Error|error|Saving|Finished|Traceback/'
 echo "TRAIN_SECONDS=$(( $(date +%s) - t1 ))"
 CFG=$(ls -t runs/*/*/*/config.yml | head -1)
-ns-eval --load-config "$CFG" --output-path eval.json 2>&1 | tail -2 || true
-ns-export gaussian-splat --load-config "$CFG" --output-dir export 2>&1 | tail -3
+TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 ns-eval --load-config "$CFG" --output-path eval.json 2>&1 | tail -2 || true
+TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 ns-export gaussian-splat --load-config "$CFG" --output-dir export 2>&1 | tail -3
 nvidia-smi --query-gpu=memory.used --format=csv
 ls -la export
