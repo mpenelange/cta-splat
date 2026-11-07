@@ -23,7 +23,7 @@ R="$(dirname "$0")/../remote"
 tar -cf - -C "$SEG" images -C "$(realpath "$R")" setup_gpu.sh train_segment.sh \
   | ssh "${SSHO[@]}" -p "$PORT" root@"$HOST" "mkdir -p /root/seg && tar -C /root/seg -xf -"
 rc=0
-ssh "${SSHO[@]}" -p "$PORT" root@"$HOST" "cd /root/seg && ( python -c \"import gsplat, nerfstudio\" 2>/dev/null || bash setup_gpu.sh ) && bash train_segment.sh /root/seg $ITERS 2>&1 | tee job.log; exit \${PIPESTATUS[0]}" || rc=$?
+ssh "${SSHO[@]}" -p "$PORT" root@"$HOST" "cd /root/seg && { ( python -c \"import gsplat, nerfstudio\" 2>/dev/null || bash setup_gpu.sh ) && bash train_segment.sh /root/seg $ITERS; } 2>&1 | tee job.log; exit \${PIPESTATUS[0]}" || rc=$?
 mkdir -p "$SEG/out"
 ssh "${SSHO[@]}" -p "$PORT" root@"$HOST" "tar -C /root/seg --exclude=images --exclude='processed/images*' -cf - ." | tar -C "$SEG/out" -xf -
 echo "job exit $rc; results in $SEG/out"; exit $rc
