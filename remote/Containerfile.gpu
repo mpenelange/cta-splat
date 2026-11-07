@@ -3,4 +3,6 @@
 # Run:   podman run --rm --device nvidia.com/gpu=all -v /path/to/segment:/seg cta-splat-gpu bash /opt/train_segment.sh /seg
 FROM docker.io/pytorch/pytorch:2.7.0-cuda12.8-cudnn9-devel
 COPY setup_gpu.sh train_segment.sh /opt/
-RUN bash /opt/setup_gpu.sh
+# CUDA compiles use 2-4 GB each; keep parallelism low on 16 GB CI runners.
+ARG MAX_JOBS=2
+RUN MAX_JOBS=$MAX_JOBS bash -x /opt/setup_gpu.sh
