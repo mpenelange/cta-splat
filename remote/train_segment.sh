@@ -23,6 +23,9 @@ echo "allotted: ${mem_gb} GB RAM, ${NPROC} cpus (host shows $(nproc)) -> COLMAP 
 nvidia-smi --query-gpu=timestamp,memory.used,memory.total,utilization.gpu,power.draw --format=csv -l 2 > vram.csv 2>&1 &
 VRAM_PID=$!; trap 'kill $VRAM_PID 2>/dev/null; echo "PEAK_VRAM_MIB=$(awk -F", " "NR>1{v=\$2+0; if(v>m)m=v} END{print m}" vram.csv)"' EXIT
 
+if [ -f processed/colmap/sparse/0/cameras.bin ]; then
+  echo "using uploaded COLMAP model (skipping SfM)"
+else
 DB=processed/colmap/database.db; mkdir -p processed/colmap/sparse
 t0=$(date +%s)
 colmap feature_extractor --database_path "$DB" --image_path images \
@@ -41,6 +44,7 @@ echo "SFM_SECONDS=$(( $(date +%s) - t0 ))"
 # Largest model -> sparse/0 for nerfstudio.
 best=$(for m in processed/colmap/sparse/*; do echo "$(colmap model_analyzer --path "$m" 2>&1 | awk '/Registered images/{print $NF}') $m"; done | sort -n | tail -1 | cut -d' ' -f2)
 [ "$best" != processed/colmap/sparse/0 ] && { mv processed/colmap/sparse/0 processed/colmap/sparse/_0 2>/dev/null || true; mv "$best" processed/colmap/sparse/0; }
+fi
 ns-process-data images --data images --output-dir processed --skip-colmap \
   --colmap-model-path colmap/sparse/0 --num-downscales 0 2>&1 | tail -5
 

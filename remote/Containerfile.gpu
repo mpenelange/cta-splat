@@ -1,8 +1,12 @@
-# GPU training image (for a home RTX 5080 / any CUDA 12.8+ GPU).
+# GPU training image (for a home RTX 5080 / any CUDA 12.8+ Blackwell GPU).
 # Build: podman build -t cta-splat-gpu -f remote/Containerfile.gpu remote
 # Run:   podman run --rm --device nvidia.com/gpu=all -v /path/to/segment:/seg cta-splat-gpu bash /opt/train_segment.sh /seg
 FROM docker.io/pytorch/pytorch:2.7.0-cuda12.8-cudnn9-devel
-COPY setup_gpu.sh train_segment.sh /opt/
 # CUDA compiles use 2-4 GB each; keep parallelism low on 16 GB CI runners.
 ARG MAX_JOBS=2
+# COLMAP first, in its own layer: it changes rarely, so it stays cached when the other scripts change.
+COPY build_colmap.sh /opt/
+RUN MAX_JOBS=$MAX_JOBS bash /opt/build_colmap.sh
+COPY setup_gpu.sh /opt/
 RUN MAX_JOBS=$MAX_JOBS bash -x /opt/setup_gpu.sh
+COPY train_segment.sh /opt/

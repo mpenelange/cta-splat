@@ -20,7 +20,8 @@ done
 read -r HOST PORT < <("$VAST" ssh-url "$ID" | sed -E 's#ssh://[^@]+@([^:]+):([0-9]+)#\1 \2#')
 for i in $(seq 1 30); do ssh "${SSHO[@]}" -p "$PORT" root@"$HOST" true 2>/dev/null && break; sleep 10; done
 R="$(dirname "$0")/../remote"
-tar -cf - -C "$SEG" images -C "$(realpath "$R")" setup_gpu.sh train_segment.sh \
+EXTRA=(); [ -d "$SEG/processed/colmap/sparse/0" ] && EXTRA=(processed/colmap/sparse/0)
+tar -cf - -C "$SEG" images "${EXTRA[@]}" -C "$(realpath "$R")" setup_gpu.sh train_segment.sh \
   | ssh "${SSHO[@]}" -p "$PORT" root@"$HOST" "mkdir -p /root/seg && tar -C /root/seg -xf -"
 rc=0
 ssh "${SSHO[@]}" -p "$PORT" root@"$HOST" "cd /root/seg && { ( python -c \"import gsplat, nerfstudio\" 2>/dev/null || bash setup_gpu.sh ) && bash train_segment.sh /root/seg $ITERS; } 2>&1 | tee job.log; exit \${PIPESTATUS[0]}" || rc=$?

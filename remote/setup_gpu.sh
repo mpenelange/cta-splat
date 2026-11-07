@@ -3,7 +3,7 @@
 # Used both on Vast instances and by remote/Containerfile.gpu (for a home RTX 5080).
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq && apt-get install -y -qq colmap ffmpeg git rsync libgl1 libglib2.0-0 libglm-dev >/dev/null
+apt-get update -qq && apt-get install -y -qq ffmpeg git rsync libgl1 libglib2.0-0 libglm-dev >/dev/null
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-12.0}" MAX_JOBS="${MAX_JOBS:-8}"
 pip install -q nerfstudio
 # Compile gsplat's CUDA kernels now for this arch instead of JIT on first use.
