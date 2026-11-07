@@ -10,6 +10,11 @@ import numpy as np
 tf = json.load(open(sys.argv[1]))
 dp = json.load(open(sys.argv[2]))
 T = np.eye(4); T[:3, :] = np.array(dp["transform"]); s = dp["scale"]
+# dataparser_transforms maps ORIGINAL COLMAP coordinates into the splat's space, i.e. it already includes
+# ns-process-data's applied_transform; the frames in transforms.json have that applied too, so undo it first.
+A = np.eye(4)
+if "applied_transform" in tf: A[:3, :] = np.array(tf["applied_transform"])
+T = T @ np.linalg.inv(A)
 
 cams = []
 for fr in tf["frames"]:
