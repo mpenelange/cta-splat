@@ -17,6 +17,7 @@ if [ -r /sys/fs/cgroup/cpu.max ]; then read -r q p < /sys/fs/cgroup/cpu.max
 else q=$(read_limit /sys/fs/cgroup/cpu/cpu.cfs_quota_us); p=$(read_limit /sys/fs/cgroup/cpu/cpu.cfs_period_us); fi
 [[ "$q" =~ ^[0-9]+$ ]] && [[ "$p" =~ ^[0-9]+$ ]] && (( q > 0 )) && NPROC=$(( (q + p - 1) / p ))
 THREADS=$(( mem_gb / 4 )); (( THREADS > NPROC )) && THREADS=$NPROC; (( THREADS < 1 )) && THREADS=1
+echo "power limit: $(nvidia-smi --query-gpu=power.limit,power.default_limit --format=csv,noheader)"
 echo "allotted: ${mem_gb} GB RAM, ${NPROC} cpus (host shows $(nproc)) -> COLMAP threads ${THREADS}; $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader)"
 
 # Log GPU memory/utilisation every 2 s for the whole job (peak VRAM sizing).
@@ -28,19 +29,32 @@ if [ -f processed/colmap/sparse/0/cameras.bin ]; then
 else
 DB=processed/colmap/database.db; mkdir -p processed/colmap/sparse
 t0=$(date +%s)
+# Lens prior (wide GoPro-style lens solved on t01): fx fy cx cy k1 k2 p1 p2. Override with CAMERA_PARAMS.
+CAMERA_PARAMS="${CAMERA_PARAMS:-2154,1949,1920,1080,-0.19,0.032,0,0}"
+GPU_SFM=1; colmap help 2>&1 | grep -q 'with CUDA' || GPU_SFM=0
+echo "COLMAP: $(colmap help 2>&1 | head -1); gpu=$GPU_SFM"
 colmap feature_extractor --database_path "$DB" --image_path images \
-  --ImageReader.single_camera 1 --ImageReader.camera_model OPENCV \
-  --SiftExtraction.use_gpu 0 --SiftExtraction.num_threads "$THREADS" \
-  --SiftExtraction.max_image_size 3840 --SiftExtraction.max_num_features 16384 2>&1 | tail -3
-colmap sequential_matcher --database_path "$DB" --SiftMatching.use_gpu 0 \
-  --SiftMatching.num_threads "$THREADS" --SequentialMatching.overlap 20 \
-  --SequentialMatching.loop_detection 0 2>&1 | tail -3
-colmap mapper --database_path "$DB" --image_path images --output_path processed/colmap/sparse \
-  --Mapper.num_threads "$NPROC" --Mapper.ba_global_function_tolerance 1e-6 2>&1 | tail -5
-echo "colmap models: $(ls processed/colmap/sparse)"; for m in processed/colmap/sparse/*; do
-  echo "model $m: $(colmap model_analyzer --path "$m" 2>&1 | grep -E 'Registered images|Points|Mean reprojection' | tr '\n' ' ')"; done
+  --ImageReader.single_camera 1 --ImageReader.camera_model OPENCV --ImageReader.camera_params "$CAMERA_PARAMS" \
+  --FeatureExtraction.use_gpu $GPU_SFM --FeatureExtraction.num_threads "$THREADS" \
+  --FeatureExtraction.max_image_size 3840 --SiftExtraction.max_num_features 16384 2>&1 | tail -2
+colmap sequential_matcher --database_path "$DB" --FeatureMatching.use_gpu $GPU_SFM \
+  --FeatureMatching.num_threads "$THREADS" --SequentialMatching.overlap 20 2>&1 | tail -2
+if [ -f pairs.txt ]; then
+  echo "extra pairs: $(wc -l < pairs.txt)"
+  colmap matches_importer --database_path "$DB" --match_list_path pairs.txt --match_type pairs \
+    --FeatureMatching.use_gpu $GPU_SFM --FeatureMatching.num_threads "$THREADS" 2>&1 | tail -2
+fi
+echo "MATCH_SECONDS=$(( $(date +%s) - t0 ))"
+if [ "${MAPPER:-global}" = global ]; then
+  colmap global_mapper --database_path "$DB" --image_path images --output_path processed/colmap/sparse \
+    --GlobalMapper.num_threads "$NPROC" 2>&1 | tail -3
+else
+  colmap mapper --database_path "$DB" --image_path images --output_path processed/colmap/sparse \
+    --Mapper.num_threads "$NPROC" --Mapper.init_min_tri_angle 2 --Mapper.init_max_forward_motion 0.999 2>&1 | tail -3
+fi
+for m in processed/colmap/sparse/*; do
+  echo "model $m: $(colmap model_analyzer --path "$m" 2>&1 | grep -E 'Registered images|Points:|Mean reprojection' | sed 's/^.*\] //' | tr '\n' ' ')"; done
 echo "SFM_SECONDS=$(( $(date +%s) - t0 ))"
-
 # Largest model -> sparse/0 for nerfstudio.
 best=$(for m in processed/colmap/sparse/*; do echo "$(colmap model_analyzer --path "$m" 2>&1 | awk '/Registered images/{print $NF}') $m"; done | sort -n | tail -1 | cut -d' ' -f2)
 [ "$best" != processed/colmap/sparse/0 ] && { mv processed/colmap/sparse/0 processed/colmap/sparse/_0 2>/dev/null || true; mv "$best" processed/colmap/sparse/0; }
@@ -48,10 +62,12 @@ fi
 ns-process-data images --data images --output-dir processed --skip-colmap \
   --colmap-model-path colmap/sparse/0 --num-downscales 0 2>&1 | tail -5
 
+EXTRA_TRAIN=()
+if [ "${BILATERAL:-0}" = 1 ] && ns-train splatfacto-big --help 2>&1 | grep -q use-bilateral-grid; then EXTRA_TRAIN+=(--pipeline.model.use-bilateral-grid True); echo "bilateral grid: on"; fi
 t1=$(date +%s)
 ns-train splatfacto-big --data processed --output-dir runs \
   --max-num-iterations "$ITERS" --viewer.quit-on-train-completion True \
-  --pipeline.datamanager.cache-images "${CACHE_IMAGES:-gpu}" \
+  --pipeline.datamanager.cache-images "${CACHE_IMAGES:-gpu}" "${EXTRA_TRAIN[@]}" \
   nerfstudio-data --downscale-factor 1 2>&1 | grep -vE '^\s*$' | awk 'NR%50==1 || /Error|error|Saving|Finished|Traceback/'
 echo "TRAIN_SECONDS=$(( $(date +%s) - t1 ))"
 CFG=$(ls -t runs/*/*/*/config.yml | head -1)
