@@ -27,6 +27,7 @@
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/",
   "@sparkjsdev/spark": "https://cdn.jsdelivr.net/npm/@sparkjsdev/spark@2.4.0/dist/spark.module.js"
 } }
 </script>
@@ -48,6 +49,10 @@
 </div>
 <div id="pads"><button id="bBrake">BRAKE</button><button id="bPower">POWER</button></div>
 
+<script>
+  addEventListener("error", e => { const l = document.getElementById("lp"); if (l) l.textContent = "Error: " + (e.message || e.error); });
+  addEventListener("unhandledrejection", e => { const l = document.getElementById("lp"); if (l) l.textContent = "Error: " + (e.reason?.message || e.reason); });
+</script>
 <script type="module">
 import * as THREE from "three";
 import { SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
