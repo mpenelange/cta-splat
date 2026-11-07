@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Red Line Cab</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e8e6e1; --dim:#9a978f; --red:#c60c30; --panel:rgba(11,13,16,.72); }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif; overflow:hidden; }
+  canvas { display:block; touch-action:none; cursor:grab; }
+  canvas:active { cursor:grabbing; }
+  #hud { position:fixed; left:16px; bottom:16px; background:var(--panel); padding:12px 14px; border-radius:10px; border-left:4px solid var(--red); min-width:220px; backdrop-filter:blur(6px); }
+  #speed { font:600 40px/1 ui-monospace,SFMono-Regular,Menlo,monospace; font-variant-numeric:tabular-nums; }
+  #speed small { font-size:14px; color:var(--dim); margin-left:4px; }
+  .row { display:flex; justify-content:space-between; gap:12px; color:var(--dim); font-variant-numeric:tabular-nums; margin-top:4px; }
+  #bar { height:4px; background:#2a2d33; border-radius:2px; margin-top:8px; overflow:hidden; }
+  #bar i { display:block; height:100%; width:0; background:var(--red); }
+  #help { position:fixed; right:16px; top:16px; background:var(--panel); padding:10px 12px; border-radius:10px; color:var(--dim); max-width:260px; backdrop-filter:blur(6px); }
+  #help b { color:var(--fg); font-weight:600; }
+  #loading { position:fixed; inset:0; display:grid; place-items:center; background:var(--bg); z-index:2; }
+  #loading div { text-align:center; } #loading .t { font-size:18px; margin-bottom:8px; }
+  #pads { position:fixed; right:16px; bottom:16px; display:flex; gap:8px; }
+  #pads button { width:64px; height:64px; border-radius:12px; border:1px solid #3a3d44; background:var(--panel); color:var(--fg); font:600 13px system-ui; touch-action:none; }
+  #pads button.on { border-color:var(--red); background:rgba(198,12,48,.35); }
+  @media (max-width:600px){ #help{ display:none; } #speed{ font-size:32px; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+  "@sparkjsdev/spark": "https://cdn.jsdelivr.net/npm/@sparkjsdev/spark@2.4.0/dist/spark.module.js"
+} }
+</script>
+</head>
+<body>
+<div id="loading"><div><div class="t">Loading Red Line segment…</div><div id="lp">0%</div></div></div>
+<div id="hud">
+  <div id="speed">0<small>mph</small></div>
+  <div class="row"><span id="dir">Forward</span><span id="notch">Coast</span></div>
+  <div class="row"><span id="dist">0 m</span><span id="len"></span></div>
+  <div id="bar"><i></i></div>
+</div>
+<div id="help">
+  <b>W / ↑</b> power &nbsp; <b>S / ↓</b> brake<br>
+  <b>Space</b> emergency brake<br>
+  <b>R</b> reverse (when stopped)<br>
+  <b>Drag</b> look around · <b>double-click</b> recenter<br>
+  <b>F</b> show training-camera speed
+</div>
+<div id="pads"><button id="bBrake">BRAKE</button><button id="bPower">POWER</button></div>
+
+<script type="module">
+import * as THREE from "three";
+import { SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
+
+const SEG = new URLSearchParams(location.search).get("seg") || "t01";
+// Scene units -> metres. ESTIMATE: assumes the source train was doing ~25 mph; refine once we measure track gauge.
+const M_PER_UNIT = 140;
+const MPH = 2.23694;
+const MAX_MPS = 55 / MPH, ACCEL = 1.2, BRAKE = 1.4, EBRAKE = 2.7, DRAG = 0.04;
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fc3e6);
+scene.add(new SparkRenderer({ renderer }));
+
+const path = await (await fetch(`${SEG}/path.json`)).json();
+const camera = new THREE.PerspectiveCamera(path.fov_y_deg, innerWidth / innerHeight, 0.0005, 200);
+
+// Path: positions on a centripetal Catmull-Rom curve; orientations slerped between neighbouring cameras.
+const pts = path.cameras.map(c => new THREE.Vector3(...c.p));
+const quats = path.cameras.map(c => {
+  const R = c.R, m = new THREE.Matrix4().set(R[0][0],R[0][1],R[0][2],0, R[1][0],R[1][1],R[1][2],0, R[2][0],R[2][1],R[2][2],0, 0,0,0,1);
+  return new THREE.Quaternion().setFromRotationMatrix(m);
+});
+for (let i = 1; i < quats.length; i++) if (quats[i].dot(quats[i-1]) < 0) quats[i].set(-quats[i].x,-quats[i].y,-quats[i].z,-quats[i].w);
+const curve = new THREE.CatmullRomCurve3(pts, false, "centripetal");
+const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i-1] + pts[i].distanceTo(pts[i-1]));
+const L = cum[cum.length - 1];
+document.getElementById("len").textContent = `${Math.round(L * M_PER_UNIT)} m`;
+
+function poseAt(s) {               // s in scene units along the path
+  s = THREE.MathUtils.clamp(s, 0, L);
+  let i = 0; while (i < cum.length - 2 && cum[i+1] < s) i++;
+  const f = (s - cum[i]) / Math.max(cum[i+1] - cum[i], 1e-9);
+  const u = curve.getUtoTmapping(0, s * curve.getLength() / L);
+  return { p: curve.getPointAt(Math.min(u,1)), q: quats[i].clone().slerp(quats[i+1], f) };
+}
+
+// Splat
+const splat = new SplatMesh({
+  url: `${SEG}/splat.spz`,
+  onProgress: e => { if (e.lengthComputable) document.getElementById("lp").textContent = `${Math.round(100*e.loaded/e.total)}%`; },
+});
+scene.add(splat);
+await splat.initialized;
+document.getElementById("loading").remove();
+
+// Input
+const keys = new Set();
+addEventListener("keydown", e => { keys.add(e.code); if (e.code === "KeyR" && Math.abs(v) < 0.05) dirSign *= -1; if (e.code === "KeyF") showRef = !showRef; });
+addEventListener("keyup", e => keys.delete(e.code));
+const pad = (id, code) => { const b = document.getElementById(id);
+  const on = e => { e.preventDefault(); keys.add(code); b.classList.add("on"); }, off = () => { keys.delete(code); b.classList.remove("on"); };
+  b.addEventListener("pointerdown", on); b.addEventListener("pointerup", off); b.addEventListener("pointerleave", off); };
+pad("bPower", "KeyW"); pad("bBrake", "KeyS");
+
+let yaw = 0, pitch = 0, drag = null;
+const cv = renderer.domElement;
+cv.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, yaw, pitch }; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", e => { if (!drag) return;
+  const k = THREE.MathUtils.degToRad(path.fov_y_deg) / innerHeight;
+  yaw = THREE.MathUtils.clamp(drag.yaw - (e.clientX - drag.x) * k, -1.2, 1.2);
+  pitch = THREE.MathUtils.clamp(drag.pitch - (e.clientY - drag.y) * k, -0.6, 0.6); });
+cv.addEventListener("pointerup", () => drag = null);
+cv.addEventListener("dblclick", () => { yaw = 0; pitch = 0; });
+addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+// Train
+let s = 0, v = 0, dirSign = 1, showRef = false;
+const look = new THREE.Quaternion(), e3 = new THREE.Euler(0, 0, 0, "YXZ");
+const $ = id => document.getElementById(id);
+let last = performance.now();
+renderer.setAnimationLoop(now => {
+  const dt = Math.min((now - last) / 1000, 0.05); last = now;
+  const power = keys.has("KeyW") || keys.has("ArrowUp"), brake = keys.has("KeyS") || keys.has("ArrowDown"), eb = keys.has("Space");
+  let a = -DRAG * v;
+  if (power && !brake && !eb) a += ACCEL * (1 - v / MAX_MPS);
+  if (brake) a -= BRAKE; if (eb) a -= EBRAKE;
+  v = Math.max(0, v + a * dt);
+  s += dirSign * v * dt / M_PER_UNIT;
+  if (s <= 0 || s >= L) { s = THREE.MathUtils.clamp(s, 0, L); v = 0; }
+
+  const { p, q } = poseAt(s);
+  e3.set(pitch, yaw, 0); look.setFromEuler(e3);
+  camera.position.copy(p);
+  camera.quaternion.copy(q).multiply(look);
+  if (dirSign < 0) camera.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), Math.PI));
+  renderer.render(scene, camera);
+
+  $("speed").firstChild.nodeValue = (v * MPH).toFixed(0);
+  $("dir").textContent = dirSign > 0 ? "Forward" : "Reverse";
+  $("notch").textContent = eb ? "EMERGENCY" : brake ? "Brake" : power ? "Power" : showRef ? `capture ≈ ${(0.0158*5*M_PER_UNIT*MPH).toFixed(0)} mph` : "Coast";
+  $("dist").textContent = `${Math.round(s * M_PER_UNIT)} m`;
+  $("bar").firstChild.style.width = `${100 * s / L}%`;
+});
+</script>
+</body>
+</html>

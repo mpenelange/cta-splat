@@ -1,0 +1,5 @@
+# Web/splat tooling: splat-transform (PLY -> SOG compression, filtering) and a static file server.
+# Build: podman build -t cta-splat-web -f container/Containerfile.web container
+FROM docker.io/library/node:22-bookworm-slim
+RUN npm install -g --no-fund --no-audit @playcanvas/splat-transform@3.10.3 && npm cache clean --force
+WORKDIR /work
