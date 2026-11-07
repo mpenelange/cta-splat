@@ -1,10 +1,12 @@
 """Extract the training-camera path in the splat's coordinate system (nerfstudio world).
 
-Usage: python camera_path.py <processed/transforms.json> <dataparser_transforms.json> <out.json>
+Usage: python camera_path.py <processed/transforms.json> <dataparser_transforms.json> <out.json> [first:last]
+Optional first:last (1-based, inclusive) keeps only those frames, e.g. 1:160 for one direction of a
+two-direction segment (mixing directions would make the path flip back and forth).
 Each camera: position + 3x3 rotation (OpenGL convention: looks down -Z, +Y up), the same convention
 three.js cameras use, so the viewer can set camera.matrix directly. Cameras are ordered along the track.
 """
-import json, sys
+import json, re, sys
 import numpy as np
 
 tf = json.load(open(sys.argv[1]))
@@ -16,8 +18,11 @@ A = np.eye(4)
 if "applied_transform" in tf: A[:3, :] = np.array(tf["applied_transform"])
 T = T @ np.linalg.inv(A)
 
+rng = [int(x) for x in sys.argv[4].split(":")] if len(sys.argv) > 4 else None
 cams = []
 for fr in tf["frames"]:
+    n = int(re.findall(r"\d+", fr["file_path"])[-1])
+    if rng and not rng[0] <= n <= rng[1]: continue
     c2w = T @ np.array(fr["transform_matrix"])
     c2w[:3, 3] *= s
     cams.append((fr["file_path"], c2w))
