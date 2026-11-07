@@ -1,0 +1,6 @@
+# GPU training image (for a home RTX 5080 / any CUDA 12.8+ GPU).
+# Build: podman build -t cta-splat-gpu -f remote/Containerfile.gpu remote
+# Run:   podman run --rm --device nvidia.com/gpu=all -v /path/to/segment:/seg cta-splat-gpu bash /opt/train_segment.sh /seg
+FROM docker.io/pytorch/pytorch:2.7.0-cuda12.8-cudnn9-devel
+COPY setup_gpu.sh train_segment.sh /opt/
+RUN bash /opt/setup_gpu.sh

@@ -1,0 +1,33 @@
+name: gpu-image
+# Builds the splat training image (CUDA 12.8, gsplat compiled for sm_120 / RTX 50xx) and pushes it to ghcr.io.
+on:
+  push:
+    branches: [main]
+    paths: [remote/**, .github/workflows/gpu-image.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Free disk space (CUDA devel base image is large)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -af
+          df -h /
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: remote
+          file: remote/Containerfile.gpu
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/cta-splat-gpu:latest
+            ghcr.io/${{ github.repository_owner }}/cta-splat-gpu:${{ github.sha }}

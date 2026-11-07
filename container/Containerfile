@@ -1,0 +1,6 @@
+# Local preprocessing tools: video download, frame extraction, inspection.
+# Build:  podman build -t cta-splat-prep -f container/Containerfile container
+FROM docker.io/library/alpine:3.22
+RUN apk add --no-cache ffmpeg python3 py3-pip deno bash jq \
+ && pip install --no-cache-dir --break-system-packages "yt-dlp[default]"
+WORKDIR /work
