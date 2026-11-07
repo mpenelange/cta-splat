@@ -6,11 +6,22 @@
 set -euo pipefail
 W="$1"; ITERS="${2:-30000}"
 cd "$W"
-mem_bytes=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo max)
-[ "$mem_bytes" = max ] && mem_bytes=$(( $(awk '/MemTotal/{print $2}' /proc/meminfo) * 1024 ))
+# Containers see the whole host in /proc; read the real limits from cgroup v2 or v1.
+read_limit(){ for f in "$@"; do [ -r "$f" ] && { cat "$f"; return; }; done; echo max; }
+mem_bytes=$(read_limit /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes)
+host_mem=$(( $(awk '/MemTotal/{print $2}' /proc/meminfo) * 1024 ))
+{ [ "$mem_bytes" = max ] || (( mem_bytes > host_mem )); } && mem_bytes=$host_mem
 mem_gb=$(( mem_bytes / 1024 / 1024 / 1024 ))
-THREADS=$(( mem_gb / 4 )); NPROC=$(nproc); (( THREADS > NPROC )) && THREADS=$NPROC; (( THREADS < 1 )) && THREADS=1
-echo "host: ${mem_gb} GB RAM, ${NPROC} cpus -> COLMAP threads ${THREADS}; $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader)"
+NPROC=$(nproc)
+if [ -r /sys/fs/cgroup/cpu.max ]; then read -r q p < /sys/fs/cgroup/cpu.max
+else q=$(read_limit /sys/fs/cgroup/cpu/cpu.cfs_quota_us); p=$(read_limit /sys/fs/cgroup/cpu/cpu.cfs_period_us); fi
+[[ "$q" =~ ^[0-9]+$ ]] && [[ "$p" =~ ^[0-9]+$ ]] && (( q > 0 )) && NPROC=$(( (q + p - 1) / p ))
+THREADS=$(( mem_gb / 4 )); (( THREADS > NPROC )) && THREADS=$NPROC; (( THREADS < 1 )) && THREADS=1
+echo "allotted: ${mem_gb} GB RAM, ${NPROC} cpus (host shows $(nproc)) -> COLMAP threads ${THREADS}; $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader)"
+
+# Log GPU memory/utilisation every 2 s for the whole job (peak VRAM sizing).
+nvidia-smi --query-gpu=timestamp,memory.used,memory.total,utilization.gpu,power.draw --format=csv -l 2 > vram.csv 2>&1 &
+VRAM_PID=$!; trap 'kill $VRAM_PID 2>/dev/null; echo "PEAK_VRAM_MIB=$(awk -F", " "NR>1{v=\$2+0; if(v>m)m=v} END{print m}" vram.csv)"' EXIT
 
 DB=processed/colmap/database.db; mkdir -p processed/colmap/sparse
 t0=$(date +%s)
